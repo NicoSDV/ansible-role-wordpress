@@ -21,6 +21,7 @@
       - httpd
       - php
       - php-mysqlnd
+      - php-fpm
       - mariadb-server
       - wget
       - unzip
@@ -69,15 +70,21 @@
   register: mariadb_sock
   when: ansible_os_family == "RedHat"
 
-- name: Initialiser MariaDB si nécessaire (Rocky)
-  shell: mysql_install_db --user=mysql --datadir=/var/lib/mysql
+# 1. Supprimer le contenu si le socket n'existe pas (MariaDB pas initialisé)
+- name: Réinitialiser MariaDB si nécessaire (Rocky)
+  shell: |
+    rm -rf /var/lib/mysql/*
+    mysql_install_db --user=mysql --basedir=/usr --datadir=/var/lib/mysql
   when:
     - ansible_os_family == "RedHat"
     - mariadb_sock is defined
     - not mariadb_sock.stat.exists
 
+# 2. Lancer MariaDB si nécessaire (si pas encore lancé)
 - name: Démarrer MariaDB sans systemd (mysqld_safe)
-  shell: nohup mysqld_safe --datadir=/var/lib/mysql &>/dev/null &
+  shell: nohup mysqld_safe --datadir=/var/lib/mysql > /var/log/mysqld_ansible.log 2>&1 &
+  async: 30
+  poll: 0
   when:
     - ansible_os_family == "RedHat"
     - mariadb_sock is defined
@@ -89,7 +96,7 @@
     delay: 5
     timeout: 15
 
-- name: Sécuriser MariaDB
+- name: Sécuriser MariaDB (Debian)
   mysql_user:
     name: root
     host: localhost
@@ -97,6 +104,17 @@
     login_unix_socket: /var/run/mysqld/mysqld.sock
     check_implicit_admin: true
   ignore_errors: true
+  when: ansible_os_family == "Debian"
+
+- name: Sécuriser MariaDB (Rocky)
+  mysql_user:
+    name: root
+    host: localhost
+    password: "{{ mysql_root_password }}"
+    login_unix_socket: /var/lib/mysql/mysql.sock
+    check_implicit_admin: true
+  ignore_errors: true
+  when: ansible_os_family == "RedHat"
 
 - name: Supprimer utilisateurs anonymes
   mysql_user:
@@ -161,6 +179,19 @@
     dest: /etc/apache2/sites-available/wordpress.conf
   notify: restart apache
   when: ansible_os_family == 'Debian'
+
+- name: Créer dossier pour socket PHP-FPM
+  file:
+    path: /run/php-fpm
+    state: directory
+    owner: apache
+    group: apache
+    mode: '0755'
+  when: ansible_os_family == "RedHat"
+
+- name: Lancer PHP-FPM manuellement dans un conteneur (Rocky)
+  shell: nohup php-fpm &>/dev/null &
+  when: ansible_os_family == "RedHat"
 
 - name: Copier le fichier de configuration Apache pour WordPress (Rocky)
   template:
