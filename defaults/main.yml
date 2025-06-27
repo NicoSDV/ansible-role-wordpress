@@ -1,0 +1,10 @@
+#SPDX-License-Identifier: MIT-0
+---
+# defaults file for ansible-role-wordpress
+mysql_root_password: nicoroot
+db_name: wordpress
+db_user: nico
+db_password: nicopw
+wp_download_url: https://wordpress.org/latest.zip
+wp_install_dir: /var/www/html
+apache_user: "{{ 'www-data' if ansible_os_family == 'Debian' else 'apache' }}"

@@ -1,0 +1,195 @@
+#SPDX-License-Identifier: MIT-0
+---
+# tasks file for ansible-role-wordpress
+- name: Installer les paquets requis pour Debian/Ubuntu
+  apt:
+    name:
+      - apache2
+      - php
+      - libapache2-mod-php
+      - php-mysql
+      - mariadb-server
+      - wget
+      - unzip
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
+- name: Installer les paquets requis pour Rocky/RedHat
+  dnf:
+    name:
+      - httpd
+      - php
+      - php-mysqlnd
+      - mariadb-server
+      - wget
+      - unzip
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "RedHat"
+
+- name: Supprimer la page par défaut Apache
+  file:
+    path: "{{ wp_install_dir }}/index.html"
+    state: absent
+
+- name: Démarrer Apache (Ubuntu)
+  service:
+    name: apache2
+    state: started
+    enabled: yes
+  when: ansible_os_family == "Debian"
+
+- name: Démarrer Apache (Rocky sans systemd)
+  shell: nohup httpd -DFOREGROUND > /dev/null 2>&1 &
+  when: ansible_os_family == "RedHat"
+
+- name: Installer PyMySQL (lib pour Ansible MySQL)
+  package:
+    name: python3-pymysql
+    state: present
+  when: ansible_os_family == 'Debian'
+
+- name: Installer PyMySQL (lib pour Ansible MySQL - Rocky)
+  dnf:
+    name: python3-PyMySQL
+    state: present
+  when: ansible_os_family == 'RedHat'
+
+- name: Démarrer MariaDB via systemd (Debian)
+  service:
+    name: mariadb
+    state: started
+    enabled: yes
+  when: ansible_os_family == "Debian"
+
+- name: Vérifier si MariaDB tourne (socket)
+  stat:
+    path: /var/lib/mysql/mysql.sock
+  register: mariadb_sock
+  when: ansible_os_family == "RedHat"
+
+- name: Initialiser MariaDB si nécessaire (Rocky)
+  shell: mysql_install_db --user=mysql --datadir=/var/lib/mysql
+  when:
+    - ansible_os_family == "RedHat"
+    - mariadb_sock is defined
+    - not mariadb_sock.stat.exists
+
+- name: Démarrer MariaDB sans systemd (mysqld_safe)
+  shell: nohup mysqld_safe --datadir=/var/lib/mysql &>/dev/null &
+  when:
+    - ansible_os_family == "RedHat"
+    - mariadb_sock is defined
+    - not mariadb_sock.stat.exists
+
+- name: Attendre que MariaDB soit prêt
+  wait_for:
+    port: 3306
+    delay: 5
+    timeout: 15
+
+- name: Sécuriser MariaDB
+  mysql_user:
+    name: root
+    host: localhost
+    password: "{{ mysql_root_password }}"
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+    check_implicit_admin: true
+  ignore_errors: true
+
+- name: Supprimer utilisateurs anonymes
+  mysql_user:
+    name: ''
+    host_all: true
+    state: absent
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+- name: Supprimer la base de test
+  mysql_db:
+    name: test
+    state: absent
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+- name: Créer la base WordPress
+  mysql_db:
+    name: "{{ db_name }}"
+    state: present
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+- name: Créer l’utilisateur MySQL
+  mysql_user:
+    name: "{{ db_user }}"
+    password: "{{ db_password }}"
+    priv: "{{ db_name }}.*:ALL"
+    host: localhost
+    state: present
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+- name: Télécharger WordPress
+  get_url:
+    url: "{{ wp_download_url }}"
+    dest: /tmp/latest.zip
+
+- name: Décompresser WordPress
+  unarchive:
+    src: /tmp/latest.zip
+    dest: /tmp
+    remote_src: yes
+
+- name: Vérifier que le dossier WordPress a bien été extrait
+  stat:
+    path: /tmp/wordpress
+  register: wp_dir
+
+- name: Debug - afficher si WordPress est présent
+  debug:
+    msg: "Le dossier WordPress est bien présent : {{ wp_dir.stat.exists }}"
+
+- name: Copier WordPress dans le dossier cible
+  shell: cp -r /tmp/wordpress/* {{ wp_install_dir }}/
+  when: wp_dir.stat.exists
+  notify: restart apache
+
+- name: Copier le fichier de configuration Apache pour WordPress (Debian)
+  template:
+    src: wordpress.conf.j2
+    dest: /etc/apache2/sites-available/wordpress.conf
+  notify: restart apache
+  when: ansible_os_family == 'Debian'
+
+- name: Copier le fichier de configuration Apache pour WordPress (Rocky)
+  template:
+    src: wordpress.conf.j2
+    dest: /etc/httpd/conf.d/wordpress.conf
+  notify: restart apache
+  when: ansible_os_family == 'RedHat'
+
+- name: Générer wp-config.php depuis le template
+  template:
+    src: wp-config.php.j2
+    dest: "{{ wp_install_dir }}/wp-config.php"
+    owner: "{{ apache_user }}"
+    group: "{{ apache_user }}"
+    mode: '0640'
+
+- name: Activer le site WordPress (Debian)
+  command: a2ensite wordpress.conf
+  args:
+    creates: /etc/apache2/sites-enabled/wordpress.conf
+  notify: restart apache
+  when: ansible_os_family == 'Debian'
+
+- name: Activer mod_rewrite (Debian)
+  command: a2enmod rewrite
+  notify: restart apache
+  when: ansible_os_family == 'Debian'
+
+- name: Désactiver le site par défaut (Debian)
+  command: a2dissite 000-default.conf
+  notify: restart apache
+  when: ansible_os_family == 'Debian'

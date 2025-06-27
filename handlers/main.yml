@@ -1,0 +1,14 @@
+#SPDX-License-Identifier: MIT-0
+---
+# handlers file for ansible-role-wordpress
+- name: restart apache
+  when: ansible_os_family == 'Debian'
+  service:
+    name: apache2
+    state: restarted
+
+- name: restart apache
+  when: ansible_os_family == 'RedHat'
+  shell: |
+    pkill -f httpd || true
+    nohup httpd -DFOREGROUND > /dev/null 2>&1 &

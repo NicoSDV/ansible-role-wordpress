@@ -1,0 +1,6 @@
+#SPDX-License-Identifier: MIT-0
+[ubuntu]
+client1 ansible_host=localhost ansible_port=2223 ansible_user=root ansible_ssh_pass=P@ssw0rd
+
+[rocky]
+client3 ansible_host=localhost ansible_port=2225 ansible_user=root ansible_ssh_pass=P@ssw0rd

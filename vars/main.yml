@@ -1,0 +1,12 @@
+#SPDX-License-Identifier: MIT-0
+---
+# vars file for ansible-role-wordpress
+apache_service: "{{ 'httpd' if ansible_os_family == 'RedHat' else 'apache2' }}"
+php_packages:
+  - php
+  - php-mysql
+  - libapache2-mod-php
+base_packages:
+  - wget
+  - unzip
+  - mariadb-server
